@@ -1,0 +1,10 @@
+install.packages("here")
+install.packages("irr")
+install.packages("car")
+library(ggplot2)
+library(tidyverse)
+library(irr)
+library(car)
+
+data_path <- here::here("data", 'rs-fMRI Vs. EEG Data Sheet_2-27-25.xlsx')
+raw_data <- readxl::read_excel(data_path, sheet = 2)

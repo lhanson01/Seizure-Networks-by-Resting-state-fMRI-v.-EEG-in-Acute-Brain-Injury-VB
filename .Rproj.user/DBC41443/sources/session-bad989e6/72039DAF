@@ -1,0 +1,26 @@
+{
+    "id": "72039DAF",
+    "path": "~/projects/2026/2026_01_VB_ABImodality/source/Old ABI Code.R",
+    "project_path": "source/Old ABI Code.R",
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1769133241821.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "10,9",
+        "scrollLine": "0"
+    },
+    "folds": "12|38|60|0|\n294|54|356|0|\n357|29|424|0|\n425|15|522|0|\n525|0|535|1|\n921|29|960|91|\n961|30|1099|33|\n1101|22|1107|0|\n",
+    "lastKnownWriteTime": 1769132599,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1769388814544,
+    "read_only": false,
+    "read_only_alternatives": []
+}

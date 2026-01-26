@@ -1,0 +1,1148 @@
+library(data.table)
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+install.packages(c("irr", "dplyr::selectiveInference", "car"))
+install.packages("car")
+library(irr)
+library(purrr)
+library(car)
+#library(dplyr::selectiveInference)
+########purrr############### SIM DATA #############################
+n = 158
+sex <- sample(c(0,1), n, replace = TRUE)
+age_rsfMRI <- c(sample(5:28, 53, replace = TRUE), sample(29:7665, 53, replace = TRUE), sample(7665:20000, 52, replace = TRUE))
+age_class <- cut(age_rsfMRI, breaks = c(0, 28, 7665, 20000), labels = c("N", "P", "A"))
+age_admit <- round(c(age_rsfMRI[1:53] - runif(53, min = 1, max =4), 
+               age_rsfMRI[54:n] - runif(n - 153, min = 1, max = 28)), 0)
+# coded diagnosis <-
+exam_admit <- runif(n, min = 1, max = 5)
+
+rsfMRI_pos <- sample(c(0,1), n, replace = TRUE)
+flip <- sample(c(0,1), n, replace = TRUE, prob = c(0.65, 0.35))
+EEG_pos <- ifelse(flip, 1 - rsfMRI_pos, rsfMRI_pos)
+rs_fMRI_networks <- rsfMRI_pos * round(rnorm(n, mean = 4, sd = 1), 0)
+atypical_signal <- ifelse(rsfMRI_pos, sample(c(0,1), 158, replace = TRUE, prob = c(0.8,0.2)), 0)
+#lat_fMRI <-  sample(c("left", "right", "bilateral"), 1, prob = c(0.25, 0.25, 0.5)),
+seizure_lateralization_fMRI <- ifelse(rsfMRI_pos, 
+                                 sample(c("left", "right", "bilateral"), n, prob = c(0.25, 0.25, 0.5), replace = TRUE),
+                                 0)
+seizure_lateralization_EEG <-  ifelse(EEG_pos, 
+                                      sample(c("left", "right", "bilateral"), n, prob = c(0.25, 0.25, 0.5), replace = TRUE),
+                                      0)
+neuro_command <- sample(c(0,1), n, replace = TRUE, prob = c(0.3,0.7))
+neuro_eye <- sample(c(0,1), n, replace = TRUE, prob = c(0.2,0.8))
+exam_to_MRI <- sample(1:4, n, replace = TRUE)
+rsfMRI_command <- sample(c(0,1), n, replace = TRUE, prob = c(0.3,0.7))
+rsfMRI_eye <- sample(c(0,1), n, replace = TRUE, prob = c(0.2,0.8))
+eeg_duration <- sample(c(1:4), n, replace = TRUE)
+process_1 <- data.frame(sex = sex,
+                         age_rsfMRI = age_rsfMRI,
+                         age_class = age_class,
+                         age_admit = age_admit,
+                         exam_admit = exam_admit,
+                         rsfMRI_pos = rsfMRI_pos,
+                         EEG_pos = EEG_pos,
+                         rs_fMRI_networks = rs_fMRI_networks,
+                         atypical_signal = atypical_signal,
+                         seizure_lateralization_fMRI = seizure_lateralization_fMRI,
+                         seizure_lateralization_EEG = seizure_lateralization_EEG,
+                         neuro_command = neuro_command,
+                         neuro_eye = neuro_eye,
+                         exam_to_MRI = exam_to_MRI,
+                         rsfMRI_command = rsfMRI_command,
+                         rsfMRI_eye = rsfMRI_eye,
+                         eeg_duration = eeg_duration
+                         )
+
+pos_vecs <- cbind(rsfMRI_pos, EEG_pos)
+
+############### Real Data  ##########################
+
+read_data <- fread("~/rs-fMRI Vs. EEG Data Sheet_2-27-25.csv")
+colnames(read_data) <- make.names(read_data[3,], unique = TRUE)
+read_data$rs.fMRI.Date <- str_split_fixed(read_data$rs.fMRI.Date, "\n", 2)[,1]
+# for(i in 1:nrow(messy)){
+#   if(grepl("\n", messy$rs.fMRI.Date)[i]){
+#     messy$rs.fMRI.Date[i] <- strsplit(messy$rs.fMRI.Date[i], "\n")[[1]][1]
+#   }
+# }
+# find first seizure date
+  # for each subject with seizure detection = 1, look at each seizure positive column seizure.positive.i
+  # record start date.i
+  # for that subject, record thos next 10 columns as that subjects EEG data
+
+
+crop <- read_data[4:148,1:42]
+
+
+process_1 <- crop %>% mutate(adm_date = as_date(Admission.Date, format = c("%m/%d/%y","%m/%d/%Y")),
+                              MRI_date = as_date(rs.fMRI.Date, format = c("%m/%d/%y","%m/%d/%Y")),
+                              EEG_date = as_date(Start.Date, format = c("%m/%d/%y","%m/%d/%Y"))) %>%
+                       mutate(adm_to_first_EEG = EEG_date - adm_date,
+                               EEG_to_MRI = MRI_date - EEG_date,
+                               Age.at.Admit = as.numeric(Age.at.Admit),
+                               Duration = as.numeric(Duration),
+                               Sex = as.numeric(Sex)) %>%
+                      dplyr::select(-DOB,
+                              -adm_date,
+                              -MRI_date,
+                              -EEG_date,
+                              -Age.at.scan,
+                              -Chart.Diagnosis,
+                              -Neuro.Exam..Admission.,
+                              -Neuro.Exam..rs.fMRI.,
+                              -Neuro.Assesment.Score,
+                              -rs.fMRI.Date,
+                              -Admission.Date,
+                              -Start.Date,
+                              -Neuro.Exam.to.rs.fMRI,
+                              -Admission.to.Neuro.Exam,
+                              -Admission.to.rs.fMRI,
+                              -Interpretation,
+                              -Impression,
+                              -Interpretation.1,
+                              -Atypical.components.DESCRIPTION,
+                              -Final.Score,
+                              -Final.Score.1,
+                              -No..of.EEG,
+                              -End.Date,
+                              -EEG.to.rs.fMRI,
+                              Population,
+                              Age.at.Admit,
+                              -Had.EEG)
+
+########## Include more EEG stuff
+########## Diagnosis Coding ##############################
+##split character vector into numeric vector, produce boolean vector of 
+coding_vec <- 1:10
+coding_variables <- as.data.frame(matrix(data = NA, nrow = nrow(process_1), ncol = 10))
+names(coding_variables) <- paste0("Diagnosis", 1:10)
+lapply(1:nrow(process_1), function(i){
+  subj_code <- as.numeric(str_split(process_1$Coded.Diagnosis[i], ",")[[1]])
+  coding_variables[i,] <<- as.numeric(coding_vec %in% subj_code)
+}
+)
+less_data <- cbind(process_1, coding_variables) %>% 
+             dplyr::select(-Coded.Diagnosis) %>%
+             filter(Seizure.Network.Positive != "",
+                    Seizure.Positive != "") %>%
+             mutate(EEG_positive = ifelse(Seizure.Positive %in% c("0", "not found", "0 - not sure"), 0, 1),
+                    fMRI_positive = as.numeric(Seizure.Network.Positive),
+                    agree = as.numeric(EEG_positive == fMRI_positive)) # %>% filter(Population == "P" | Population == "p" )
+
+no_assess_network <- less_data %>% #always do this one for now
+                    dplyr::select(-Eye.Opening, # removed for now for incomplete data
+                            -Command.Following, # removed for now for incomplete data
+                            -SOZ.Network...s, # removed for now for incomplete data
+                            -Total.SOZ.Networks # removed for now for incomplete data
+                      )
+
+neonates <- less_data$Age.at.Admit < 29
+pedes <- less_data$Age.at.Admit < 6570 & less_data$Age.at.Admit > 28
+adults <- less_data$Age.at.Admit > 6569
+### Visualizations for agreement among subgroups,  ###########
+
+# violin for age at admit
+less_data$agree_label <- factor(less_data$agree, levels = c(0, 1), labels = c("Disagree", "Agree"))
+
+
+ggplot(data = less_data, mapping = aes(x = agree_label, y = Age.at.Admit, fill = agree_label)) +
+  geom_violin(width = 1) + geom_jitter(width = 0.15) + coord_flip() + labs(x = "Modality Agreement", y = "Age (days)", title = "Agreement by Age in Days") 
+
+
+
+
+ggplot(data = less_data, mapping = aes(x = factor(agree), y = Age.at.Admit)) +
+  geom_boxplot() + geom_jitter() + coord_flip() + labs(x = "Agreement", y = "Age (days)", title = "Agreement by Age in Days") 
+
+cdplot(factor(less_data$agree) ~ less_data$Age.at.Admit)
+cdplot(factor(less_data$agree[!adults]) ~ less_data$Age.at.Admit[!adults])
+cdplot(factor(less_data$agree[neonates]) ~ less_data$Age.at.Admit[neonates])
+
+
+
+data_w_age_group <- less_data %>% mutate(new_pop = ifelse(neonates, "Neonate", ifelse(pedes, "Pediatric", "Adult")))
+
+w_frequency <- data_w_age_group %>% count(new_pop, agree) %>% group_by(new_pop) %>% mutate(rel_freq = n / sum(n))
+
+# bar graph for population groups 
+ggplot(w_frequency, aes(x = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult")), y = rel_freq, fill = factor(agree, levels = c(0,1), labels = c("Disagree", "Agree")))) +
+  geom_col() +  # Side-by-side proportions
+  scale_y_continuous(labels = scales::percent_format()) +  # Show y-axis as percentages
+  labs(x = "Age Population", y = "Percent Agreement", fill = "Modality Agreement", title = "EEG seizure vs. rs-fMRI SzNET identification by Age Population") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#above by sex
+#males
+data_w_age_group_male <- data_w_age_group %>% filter(Sex == 1)
+
+w_frequency_male <- data_w_age_group_male %>% count(new_pop, agree) %>% group_by(new_pop) %>% mutate(rel_freq = n / sum(n))
+
+# bar graph for population groups 
+ggplot(w_frequency_male, aes(x = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult")), y = rel_freq, fill = factor(agree, levels = c(0,1), labels = c("Disagree", "Agree")))) +
+  geom_col() +  # Side-by-side proportions
+  scale_y_continuous(labels = scales::percent_format()) +  # Show y-axis as percentages
+  labs(x = "Age Population", y = "Percent Agreement", fill = "Modality Agreement", title = "EEG seizure vs. rs-fMRI SzNET identification by Age Population (Males)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#females
+data_w_age_group_female <- data_w_age_group %>% filter(Sex == 0)
+
+w_frequency_female <- data_w_age_group_female %>% count(new_pop, agree) %>% group_by(new_pop) %>% mutate(rel_freq = n / sum(n))
+
+# bar graph for population groups 
+ggplot(w_frequency_female, aes(x = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult")), y = rel_freq, fill = factor(agree, levels = c(0,1), labels = c("Disagree", "Agree")))) +
+  geom_col() +  # Side-by-side proportions
+  scale_y_continuous(labels = scales::percent_format()) +  # Show y-axis as percentages
+  labs(x = "Age Population", y = "Percent Agreement", fill = "Modality Agreement", title = "EEG seizure vs. rs-fMRI SzNET identification by Age Population (Females)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#a lot of agreement in neonatals 
+
+
+#violin for admission to mri
+ggplot(data = less_data, mapping = aes(x = factor(agree), y = adm_to_MRI)) +
+  geom_violin() 
+
+#violin for mri to eeg 
+ggplot(data = less_data, mapping = aes(x = factor(agree), y = MRI_to_EEG)) +
+  geom_violin()
+
+# Eye opening vs agreement
+ggplot(data = less_data, mapping = aes(x = Eye.Opening, fill = factor(agree))) +
+  geom_bar(position = "dodge") 
+
+#Command following vs agreement
+ggplot(data = less_data, mapping = aes(x = Command.Following, fill = factor(agree))) +
+  geom_bar(position = "dodge")
+
+
+
+# Diagnosis 1
+
+
+### Visualizations for agreement among adult
+########## McNemar's test ################################
+
+##all
+ag_table <- table(less_data$EEG_positive, less_data$fMRI_positive)
+names(dimnames(ag_table)) <- c("EEG", "fMRI")
+ag_table_margin <- addmargins(ag_table)
+ag_table_margin
+marginals <- rbind(ag_table_margin[3,1:2], ag_table_margin[1:2,3])
+rownames(marginals) <- c("rs-fMRI", "EEG")
+counts <- c(marginals[,1], marginals[,2])
+p <- barplot(marginals, beside = TRUE, names.arg = c("Negative", "Positive"), col = c("pink","lightblue"),
+        main = "Seizure Identification By Modality", ylab = "Count",  ylim = c(0, max(marginals) + 15))
+legend(x = 4.2, y = 100, legend = c("rs-fMRI SzNET", "EEG Seizure"), fill = c("pink", "lightblue"), cex = 0.6)
+text(x = p, y = marginals, labels = counts, pos = 3, cex = 0.7)
+mc_test <- mcnemar.test(ag_table)
+marginals
+mc_test
+
+####neonates#####
+ag_table <- table(less_data$EEG_positive[neonates], less_data$fMRI_positive[neonates])
+names(dimnames(ag_table)) <- c("EEG", "fMRI")
+ag_table_margin <- addmargins(ag_table)
+ag_table_margin
+marginals <- rbind(ag_table_margin[3,1:2], ag_table_margin[1:2,3])
+rownames(marginals) <- c("rs-fMRI", "EEG")
+counts <- c(marginals[,1], marginals[,2])
+p <- barplot(marginals, beside = TRUE, names.arg = c("Negative", "Positive"), col = c("pink","lightblue"),
+             main = "Seizure Identification By Modality (Neonates)", ylab = "Count",  ylim = c(0, max(marginals) + 15))
+legend(x = 4.2, y = 55, legend = c("rs-fMRI SzNET", "EEG Seizure"), fill = c("pink", "lightblue"), cex = 0.6)
+text(x = p, y = marginals, labels = counts, pos = 3, cex = 0.7)
+mc_test_neo <- mcnemar.test(ag_table)
+marginals
+mc_test_neo
+
+####pedes#####
+ag_table <- table(less_data$EEG_positive[pedes], less_data$fMRI_positive[pedes])
+names(dimnames(ag_table)) <- c("EEG", "fMRI")
+ag_table_margin <- addmargins(ag_table)
+ag_table_margin
+marginals <- rbind(ag_table_margin[3,1:2], ag_table_margin[1:2,3])
+rownames(marginals) <- c("rs-fMRI", "EEG")
+counts <- c(marginals[,1], marginals[,2])
+p <- barplot(marginals, beside = TRUE, names.arg = c("Negative", "Positive"), col = c("pink","lightblue"),
+             main = "Seizure Identification By Modality (Children)", ylab = "Count",  ylim = c(0, max(marginals) + 15))
+legend(x = 4.2, y = 45, legend = c("rs-fMRI SzNET", "EEG Seizure"), fill = c("pink", "lightblue"), cex = 0.6)
+text(x = p, y = marginals, labels = counts, pos = 3, cex = 0.7)
+mc_test_pedes <- mcnemar.test(ag_table)
+marginals
+mc_test_pedes
+
+####adults#####
+ag_table <- table(less_data$EEG_positive[adults], less_data$fMRI_positive[adults])
+names(dimnames(ag_table)) <- c("EEG", "fMRI")
+ag_table_margin <- addmargins(ag_table)
+ag_table_margin
+marginals <- rbind(ag_table_margin[3,1:2], ag_table_margin[1:2,3])
+rownames(marginals) <- c("rs-fMRI", "EEG")
+counts <- c(marginals[,1], marginals[,2])
+p <- barplot(marginals, beside = TRUE, names.arg = c("Negative", "Positive"), col = c("pink","lightblue"),
+             main = "Seizure Identification By Modality (Adults)", ylab = "Count",  ylim = c(0, max(marginals) + 15))
+legend(x = 4.2, y = 25, legend = c("rs-fMRI SzNET", "EEG Seizure"), fill = c("pink", "lightblue"), cex = 0.6)
+text(x = p, y = marginals, labels = counts, pos = 3, cex = 0.7)
+mc_test_adults <- mcnemar.test(ag_table)
+marginals
+mc_test_adults
+
+
+#### combined visualization for frequency of detection####
+#
+
+data_w_age_group <- less_data %>% mutate(new_pop = ifelse(neonates, "Neonate", ifelse(pedes, "Pediatric", "Adult"))) 
+
+vis_frame <- data_w_age_group %>% mutate(EEG_positive = factor(EEG_positive, levels = c(0,1), labels = c("Negative", "Positive")),
+                                         fMRI_positive = factor(fMRI_positive, levels = c(0,1), labels = c("Negative", "Positive")),
+                                         new_pop = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult"))) %>%
+                                         select(new_pop, EEG_positive, fMRI_positive) %>% 
+              rename("EEG Electrographic Seizure" = EEG_positive, "rs-fMRI SN identification" = fMRI_positive, "Age Group" = new_pop) %>%
+              pivot_longer(cols = c(`EEG Electrographic Seizure`, `rs-fMRI SN identification`),
+                           names_to = "Modality",
+                           values_to = "Result",
+                           ) %>%
+              count(Modality, Result, `Age Group`) %>%
+              mutate(Result = factor(Result, levels = c("Negative", "Positive")),
+                     `Age Group` = factor(`Age Group`, levels = c("Neonate", "Pediatric", "Adult")),
+                     Group = factor(
+                       paste(Result, `Age Group`),
+                       levels = c(paste("Negative", c("Neonate", "Pediatric", "Adult")),
+                                  paste("Positive", c("Neonate", "Pediatric", "Adult"))
+                     ))) 
+
+  
+text_heights_vector <- numeric(length=nrow(vis_frame))
+text_heights_vector[1] <- sum(vis_frame$n[which(vis_frame$Modality == unique(vis_frame$Modality)[1])])
+for(i in 2:nrow(vis_frame)){
+  if (vis_frame$Modality[i-1] != vis_frame$Modality[i]){
+    text_heights_vector[i] <- text_heights_vector[1]
+  } else {
+    text_heights_vector[i] <- text_heights_vector[i-1] - vis_frame$n[i]
+  }
+}
+
+
+
+
+          
+
+ggplot(vis_frame, aes(x=Modality, y = n, fill = Group)) +
+  geom_col() + 
+  scale_fill_manual(values = c(
+    # Negative (blues)
+    "Negative Neonate" = "#bdd7e7",
+    "Negative Pediatric" = "#6baed6",
+    "Negative Adult"   = "#2171b5",
+    
+    # Positive (reds)
+    "Positive Neonate" = "#fcae91",
+    "Positive Pediatric" = "#fb6a4a",
+    "Positive Adult"   = "#cb181d"
+  )) + #geom_text(aes(x=Modality, y = n, label = n))
+  labs(title = "Modality Seizure / SN Identification Frequency", y = "Number of Subjects")
+
+
+# bar graph for population groups 
+ggplot(w_frequency_HIE, aes(x = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult")), y = rel_freq, fill = factor(Diagnosis3, levels = c(0,1), labels = c("HIE", "No HIE")))) +
+  geom_col() +  # Side-by-side proportions
+  scale_y_continuous(labels = scales::percent_format()) +  # Show y-axis as percentages
+  labs(x = "Age Population", y = "Percent HIE", fill = "Modality Agreement", title = "HIE by Age Population") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + scale_fill_viridis_d()
+
+
+#### Agreement Visualization ######
+less_data_vis <- less_data %>% select(-Population) %>% mutate(EEG_pos_fac = factor(EEG_positive, levels = c(1,0), labels = c("Yes","No")),
+                     fmri_pos_fac = factor(fMRI_positive, levels = c(0,1), labels = c("No", "Yes")),
+                     "Age Population" = ifelse(neonates, "Neonate", ifelse(pedes, "Children", "Adult")))
+
+ggplot(less_data_vis, aes(x=EEG_pos_fac, y = fmri_pos_fac)) + 
+  geom_jitter(width = 0.3, height = 0.3, size = 2.8, alpha = 0.6, color = "blue") +
+  geom_vline(xintercept=1.5, alpha =0.5) +
+  geom_hline(yintercept = 1.5, alpha =  0.5) +
+  labs( x = "EEG seizure detected",
+        y = "rs-fMRI Sz-NET Identified",
+        title = "Subject-Level Seizure Detection") +
+  theme(
+    legend.position = "top",
+    legend.key.size = unit(0.3, "cm"),
+    plot.title = element_text(hjust=0.5) 
+  )
+
+ggplot(less_data_vis, aes(x=EEG_pos_fac, y = fmri_pos_fac, color = `Age Population`)) + 
+  geom_jitter(width = 0.2, height = 0.2, size = 2.8, alpha = 0.6) + facet_wrap(~`Age Population`) +
+  geom_vline(xintercept=1.5, color = "black", alpha =0.5) +
+  geom_hline(yintercept = 1.5, color = "black", alpha =  0.5) +
+  labs( x = "EEG seizure detected",
+        y = "rs-fMRI Sz-NET Identified",
+        title = "Subject-Level Seizure Detection by Age Group") +
+  theme(
+    legend.position = "top",
+    legend.key.size = unit(0.3, "cm"),
+    plot.title = element_text(hjust=0.5) 
+  )
+
+ggplot(less_data_vis, aes(x=EEG_pos_fac, y = fmri_pos_fac, color = `Age Population`)) + 
+  geom_jitter(width = 0.2, height = 0.2, size = 2.8, alpha = 0.6) + facet_wrap(~`Sex`) +
+  geom_vline(xintercept=1.5, color = "black", alpha =0.5) +
+  geom_hline(yintercept = 1.5, color = "black", alpha =  0.5) +
+  labs( x = "EEG seizure detected",
+        y = "rs-fMRI Sz-NET Identified",
+        title = "Subject-Level Seizure Detection by Age Group") +
+  theme(
+    legend.position = "top",
+    legend.key.size = unit(0.3, "cm"),
+    plot.title = element_text(hjust=0.5) 
+  )
+  
+
+######### Stratified Kappa
+
+#### HIE, TBI vs other etiology by age group vis
+  #for each age group, show stacked bar of HIE vs other 
+w_frequency_HIE <- data_w_age_group %>% count(new_pop, Diagnosis3) %>% group_by(new_pop) %>% mutate(rel_freq = n / sum(n))
+
+# bar graph for population groups 
+ggplot(w_frequency_HIE, aes(x = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult")), y = rel_freq, fill = factor(Diagnosis3, levels = c(0,1), labels = c("No HIE", "HIE")))) +
+  geom_col() +  # Side-by-side proportions
+  scale_y_continuous(labels = scales::percent_format()) +  # Show y-axis as percentages
+  labs(x = "Age Population", y = "Percent HIE", fill = "Legend", title = "HIE by Age Population") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + scale_fill_viridis_d()
+
+#TBI
+w_frequency_TBI <- data_w_age_group %>% count(new_pop, Diagnosis4) %>% group_by(new_pop) %>% mutate(rel_freq = n / sum(n))
+
+# bar graph for population groups 
+ggplot(w_frequency_TBI, aes(x = factor(new_pop, levels = c("Neonate", "Pediatric", "Adult")), y = rel_freq, fill = factor(Diagnosis4, levels = c(0,1), labels = c("No TBI", "TBI")))) +
+  geom_col() +  # Side-by-side proportions
+  scale_y_continuous(labels = scales::percent_format()) +  # Show y-axis as percentages
+  labs(x = "Age Population", y = "Percent TBI", fill = "Legend", title = "TBI by Age Population") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + scale_fill_viridis_d()
+
+###demographics#####
+#age
+n_neonates <- sum(neonates)
+n_pedes <- sum(pedes)
+n_adults <- sum(adults)
+
+#sex
+n_males_all <- sum(less_data$Sex == 1)
+n_males_neonates <- sum(less_data[neonates,]$Sex ==1)
+n_males_pedes <- sum(less_data[pedes,]$Sex ==1)
+n_males_adults <- sum(less_data[adults,]$Sex ==1)
+
+
+percent_males_all <- sum(less_data$Sex == 1)/nrow(less_data)
+percent_males_neonates <- sum(less_data[neonates,]$Sex ==1)/nrow(less_data[neonates,])
+percent_males_pedes <- sum(less_data[pedes,]$Sex ==1)/nrow(less_data[pedes,])
+percent_males_adults <- sum(less_data[adults,]$Sex ==1)/nrow(less_data[adults,])
+
+#age
+total_age_summary <- summary(less_data$Age.at.Admit)
+neo_age_summary <-summary(less_data$Age.at.Admit[neonates])
+pede_age_summary <- summary(less_data$Age.at.Admit[pedes])
+adult_age_summary<- summary(less_data$Age.at.Admit[adults])
+total_age_summary 
+neo_age_summary 
+pede_age_summary 
+adult_age_summary 
+
+
+
+#admit to eeg
+admeeg_total <-c(mean(less_data$adm_to_first_EEG, na.rm = TRUE), sd(less_data$adm_to_first_EEG, na.rm = TRUE))
+admeeg_neo <-c(mean(less_data$adm_to_first_EEG[neonates], na.rm = TRUE), sd(less_data$adm_to_first_EEG[neonates], na.rm = TRUE))
+admeeg_pedes <- c(mean(less_data$adm_to_first_EEG[pedes], na.rm = TRUE), sd(less_data$adm_to_first_EEG[pedes], na.rm = TRUE))
+admeeg_adults <- c(mean(less_data$adm_to_first_EEG[adults], na.rm = TRUE), sd(less_data$adm_to_first_EEG[adults], na.rm = TRUE))
+admeeg_total
+admeeg_neo
+admeeg_pedes
+admeeg_adults
+
+#median / IQR
+admeeg_total_mediqr <-c(median(less_data$adm_to_first_EEG, na.rm = TRUE), IQR(less_data$adm_to_first_EEG, na.rm = TRUE))
+admeeg_neo_mediqr <-c(median(less_data$adm_to_first_EEG[neonates], na.rm = TRUE), IQR(less_data$adm_to_first_EEG[neonates], na.rm = TRUE))
+admeeg_pedes_mediqr <- c(median(less_data$adm_to_first_EEG[pedes], na.rm = TRUE), IQR(less_data$adm_to_first_EEG[pedes], na.rm = TRUE))
+admeeg_adults_mediqr <- c(median(less_data$adm_to_first_EEG[adults], na.rm = TRUE), IQR(less_data$adm_to_first_EEG[adults], na.rm = TRUE))
+admeeg_total_mediqr
+admeeg_neo_mediqr
+admeeg_pedes_mediqr
+admeeg_adults_mediqr
+
+###eeg to MRI 
+eegmri_total <-c(mean(less_data$EEG_to_MRI, na.rm = TRUE), sd(less_data$EEG_to_MRI, na.rm = TRUE))
+eegmri_neo <-c(mean(less_data$EEG_to_MRI[neonates], na.rm = TRUE), sd(less_data$EEG_to_MRI[neonates], na.rm = TRUE))
+eegmri_pedes <- c(mean(less_data$EEG_to_MRI[pedes], na.rm = TRUE), sd(less_data$EEG_to_MRI[pedes], na.rm = TRUE))
+eegmri_adults <- c(mean(less_data$EEG_to_MRI[adults], na.rm = TRUE), sd(less_data$EEG_to_MRI[adults], na.rm = TRUE))
+eegmri_total
+eegmri_neo
+eegmri_pedes
+eegmri_adults
+
+#median / IQR
+eegmri_total_mediqr <-c(median(less_data$EEG_to_MRI, na.rm = TRUE), IQR(less_data$EEG_to_MRI, na.rm = TRUE))
+eegmri_neo_mediqr <-c(median(less_data$EEG_to_MRI[neonates], na.rm = TRUE), IQR(less_data$EEG_to_MRI[neonates], na.rm = TRUE))
+eegmri_pedes_mediqr <- c(median(less_data$EEG_to_MRI[pedes], na.rm = TRUE), IQR(less_data$EEG_to_MRI[pedes], na.rm = TRUE))
+eegmri_adults_mediqr <- c(median(less_data$EEG_to_MRI[adults], na.rm = TRUE), IQR(less_data$EEG_to_MRI[adults], na.rm = TRUE))
+eegmri_total_mediqr
+eegmri_neo_mediqr
+eegmri_pedes_mediqr
+eegmri_adults_mediqr
+
+#seizure detected on EEG 
+eegpos_total <- c(sum(less_data$EEG_positive), 
+                  sum(less_data$EEG_positive)/length(less_data$EEG_positive))
+eegpos_neo <- c(sum(less_data$EEG_positive[neonates]), 
+                sum(less_data$EEG_positive[neonates])/length(less_data$EEG_positive[neonates]))
+eegpos_pedes <- c(sum(less_data$EEG_positive[pedes]), 
+                  sum(less_data$EEG_positive[pedes])/length(less_data$EEG_positive[pedes]))
+eegpos_adults <- c(sum(less_data$EEG_positive[adults]), 
+                   sum(less_data$EEG_positive[adults])/length(less_data$EEG_positive[adults]))
+eegpos_total
+eegpos_neo
+eegpos_pedes
+eegpos_adults
+
+#SzNET detected on fmri
+mripos_total <- c(sum(less_data$fMRI_positive), 
+                  sum(less_data$fMRI_positive)/length(less_data$fMRI_positive))
+mripos_neo <- c(sum(less_data$fMRI_positive[neonates]), 
+                sum(less_data$fMRI_positive[neonates])/length(less_data$fMRI_positive[neonates]))
+mripos_pedes <- c(sum(less_data$fMRI_positive[pedes]), 
+                  sum(less_data$fMRI_positive[pedes])/length(less_data$fMRI_positive[pedes]))
+mripos_adults <- c(sum(less_data$fMRI_positive[adults]), 
+                   sum(less_data$fMRI_positive[adults])/length(less_data$fMRI_positive[adults]))
+mripos_total
+mripos_neo
+mripos_pedes
+mripos_adults
+
+####### AGREEMENT function ##################################
+
+c_kappa <- function(x1, x2){
+  N <- length(x1) 
+  n01 <- N - sum(x1) #amount of negative rsfMRi scans
+  n02 <- N - sum(x2) #amount of negative EEG scans
+  n11 <- sum(x1) #amount of positive rsfMRI scans
+  n12 <- sum(x2) #amount of positive EEG scans
+  p_e <- 1/N^2 * (n01 * n02 + n11 * n12)
+  p_0 <- sum(x1 == x2) / N
+  k <- (p_0 - p_e) / (1 - p_e)
+  return(k)
+}
+###### bootstrap #############
+#need to resample each EEG / rsFMRI sample together per subject, obv
+### full set 
+num_samps <- 20000
+pos_vecs <- cbind(less_data$EEG_positive, less_data$fMRI_positive)
+n <- nrow(pos_vecs)
+perc_agree_all <- sum(pos_vecs[,1] == pos_vecs[,2]) / n
+agreement_est_all <- c_kappa(pos_vecs[,1], pos_vecs[,2])
+set.seed(42)
+bs_index <- replicate(num_samps, sample(1:n, size = n, replace = TRUE)) 
+bs_vecs <- vector(mode = "list", length = num_samps)
+agreement_list <- as.numeric(lapply(1:num_samps, function(i){
+                              bs_vecs[[i]] <- pos_vecs[bs_index[,i],]
+                              agreement <- c_kappa(bs_vecs[[i]][,1],bs_vecs[[i]][,2])
+                             }))
+c_interval_all <- quantile(agreement_list, c(0.025,0.975))
+perc_agree_all
+agreement_est_all
+c_interval_all
+###neonates 
+num_samps <- 20000
+pos_vecs <- cbind(less_data$EEG_positive[neonates], less_data$fMRI_positive[neonates])
+n <- nrow(pos_vecs)
+perc_agree_neo <- sum(pos_vecs[,1] == pos_vecs[,2]) / n
+agreement_est_neo <- c_kappa(pos_vecs[,1], pos_vecs[,2])
+set.seed(42)
+bs_index <- replicate(num_samps, sample(1:n, size = n, replace = TRUE)) 
+bs_vecs <- vector(mode = "list", length = num_samps)
+agreement_list <- as.numeric(lapply(1:num_samps, function(i){
+  bs_vecs[[i]] <- pos_vecs[bs_index[,i],]
+  agreement <- c_kappa(bs_vecs[[i]][,1],bs_vecs[[i]][,2])
+}))
+c_interval_neo <- quantile(agreement_list, c(0.025,0.975))
+c_interval_neo
+agreement_est_neo
+perc_agree_neo
+
+##pedes
+num_samps <- 20000
+pos_vecs <- cbind(less_data$EEG_positive[pedes], less_data$fMRI_positive[pedes])
+n <- nrow(pos_vecs)
+perc_agree_pedes <- sum(pos_vecs[,1] == pos_vecs[,2]) / n
+agreement_est_pedes <- c_kappa(pos_vecs[,1], pos_vecs[,2])
+set.seed(42)
+bs_index <- replicate(num_samps, sample(1:n, size = n, replace = TRUE)) 
+bs_vecs <- vector(mode = "list", length = num_samps)
+agreement_list <- as.numeric(lapply(1:num_samps, function(i){
+  bs_vecs[[i]] <- pos_vecs[bs_index[,i],]
+  agreement <- c_kappa(bs_vecs[[i]][,1],bs_vecs[[i]][,2])
+}))
+c_interval_pedes <- quantile(agreement_list, c(0.025,0.975))
+c_interval_pedes
+agreement_est_pedes
+perc_agree_pedes
+
+#adults
+num_samps <- 20000
+pos_vecs <- cbind(less_data$EEG_positive[adults], less_data$fMRI_positive[adults])
+n <- nrow(pos_vecs)
+perc_agree_adults <- sum(pos_vecs[,1] == pos_vecs[,2]) / n
+agreement_est_adults <- c_kappa(pos_vecs[,1], pos_vecs[,2])
+set.seed(42)
+bs_index <- replicate(num_samps, sample(1:n, size = n, replace = TRUE)) 
+bs_vecs <- vector(mode = "list", length = num_samps)
+agreement_list <- as.numeric(lapply(1:num_samps, function(i){
+  bs_vecs[[i]] <- pos_vecs[bs_index[,i],]
+  agreement <- c_kappa(bs_vecs[[i]][,1],bs_vecs[[i]][,2])
+}))
+c_interval_adults <- quantile(agreement_list, c(0.025,0.975))
+c_interval_adults
+agreement_est_adults
+perc_agree_adults
+########## Lateralization ################################
+positives <- less_data[EEG_positive == 1 & fMRI_positive == 1,]
+lat_table <- table(positives$seizure_lateralization_EEG, positives$seizure_lateralization_fMRI)
+names(dimnames(lat_table)) <- c("EEG Lateralization", "fMRI Lateralization")
+full_lat_table <-addmargins(lat_table)
+full_lat_table
+marginals <- rbind(full_lat_table[4,1:3], full_lat_table[1:3,4])
+rownames(marginals) <- c("rs-fMRI", "EEG")
+barplot(marginals, beside = TRUE, col = c("red","blue"), legend = TRUE)
+###bhapkar / stuart maxwell test for marginal homogeneity using irr
+sm_test <- stuart.maxwell.mh(full_lat_table)
+### Multiple McNemar's
+cont_tables <- vector(mode = "list")
+test_list <- vector(mode = "list")
+for(lat in c("left", "right", "bilateral")){
+  cont_tables[[lat]] <- matrix(data = c(lat_table[lat,lat], 
+                                        sum(lat_table[lat, !(colnames(lat_table) %in% lat)]),
+                                        sum(lat_table[!(rownames(lat_table) %in% lat), lat]),
+                                        sum(lat_table[!(rownames(lat_table) %in% lat), !(colnames(lat_table) %in% lat)])),
+                               nrow = 2, byrow = TRUE)
+  colnames(cont_tables[[lat]]) <- c(lat, paste(colnames(lat_table)[!(colnames(lat_table) %in% lat)], 
+                                                         collapse = "/")
+                                   )
+  rownames(cont_tables[[lat]]) <- c(lat, paste(colnames(lat_table)[!(colnames(lat_table) %in% lat)], 
+                                                       collapse = "/")
+                                    
+                                   )
+  test_list[[lat]] <- mcnemar.test(bilateral_vs_focal)
+  
+  names(dimnames(cont_tables[[lat]])) <- c("EEG Lateralization", "fMRI Lateralization")
+
+}
+bonferroni_level <- 0.05/3
+
+
+########## Regression ####################################
+### Isolate subjects with complete data (SOZ networks, eye opening, command following) #####
+CF <- less_data$Command.Following %in% c("0","1") 
+EO <- less_data$Eye.Opening %in% c("0","1")
+SOZs_and_count <- !(less_data$SOZ.Network...s %in% c(NA, ""))
+small_indeces <- CF & EO & SOZs_and_count
+#SOZ_coding_vec <- unique(as.numeric(str_split_fixed(with_assess_networks$SOZ.Network...s, ",", n = 15)))
+small_frame <- less_data %>% filter(small_indeces) %>% dplyr::select(-SOZ.Network...s) %>%
+  mutate(Total.SOZ.Networks = as.numeric(Total.SOZ.Networks))
+
+
+### Agreement regression #####
+regress_frame_big <- no_assess_network %>% #filter(Population == "N") %>% #neonates
+                                        #filter(Population == "P" | Population == "p") %>% #pedes
+                                        #filter(Population != "A") %>% #adults
+                                      filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+                                      dplyr::select(-Diagnosis8, -Diagnosis1) %>% #neonates
+                                      dplyr::select(-ID,
+                                      -Seizure.Network.Positive,
+                                      -L,
+                                      -R,
+                                      -B,
+                                      -Seizure.Positive,
+                                      -Seizure.Detected,
+                                      -L.1,
+                                      -R.1,
+                                      -B.1,
+                                      -EEG_positive,
+                                      -fMRI_positive,
+                                      -Duration,
+                                      #-agree,
+                                      #-Diagnosis1,
+                                      #-Diagnosis2,
+                                      #-Diagnosis3,
+                                      #-Diagnosis4,
+                                      #-Diagnosis5,
+                                      #-Diagnosis6,
+                                      #-Diagnosis7,
+                                      #-Diagnosis8,
+                                      #-Diagnosis9,
+                                      #-Diagnosis10,
+                                      #-Diagnosis8,
+                                      -Atypical.Signal,
+                                      -Population) %>%
+                               #slice(which(!is.na(as.numeric(Duration)))) %>% 
+                              mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+                              mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree <- sum(regress_frame_big$agree) / length(regress_frame_big$agree)
+log_model_agree_big <- glm(agree ~., data = regress_frame_big, family = "binomial")
+coefs <- log_model_agree_big$coefficients
+PL_confints <- confint(log_model_agree_big)
+LR_pvalue <-  c(NA,Anova(log_model_agree_big, test = "LR")[,3])
+results_frame <- data.frame(Coefficients = coefs, OR = exp(coefs), ORLowerBound = exp(PL_confints[,1]), 
+                            ORUpperBound = exp(PL_confints[,2]), p_value = LR_pvalue)
+View(results_frame)
+summary(log_model_agree_big)
+
+#####naive logistic regression / agreement regression visualization#####
+
+less_data_years <- less_data %>% mutate(age_years = Age.at.Admit / 365)
+age_regression <- glm(agree ~ age_years, data = less_data_years, family = "binomial")
+
+pred <- predict(age_regression, type = "link", se.fit = T)
+prediction_frame <- less_data_years %>% mutate(predictions = pred$fit,
+                                         se = pred$se.fit,
+                                         p = plogis(predictions),
+                                         LCI = plogis(predictions - 1.96*se),
+                                         UCI = plogis(predictions + 1.96*se)) %>%
+                                           arrange(age_years)
+ggplot(data = prediction_frame, aes(x=age_years, y = agree)) + geom_point() + 
+  geom_line(aes(y=p, color = "Predicted probability of agreement"), 
+              linewidth = 0.8) +
+  geom_ribbon(aes(ymin=LCI, ymax = UCI, fill = "95% Confidence Interval"), alpha = 0.3,) +
+  labs(x = "Age in Years", y = "Modality Agreement",  
+       color = "", fill ="", title = "Age in Years vs Modality Agreement") + 
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.key.size = unit(0.3, "cm"),
+    plot.title = element_text(hjust=0.5) 
+  )
+
+
+
+
+
+#### is rs-fMRI predictive of EEG? ########
+EEG_on_rsfMRI <- glm(EEG_positive ~ fMRI_positive, data = less_data, family = "binomial")
+summary(EEG_on_rsfMRI)
+EEG_on_rsfMRI_wcovar <- glm(EEG_positive ~ ., data = no_assess_network %>% #filter(Population == "N") %>% #neonates
+                              #filter(Population == "P" | Population == "p") %>% #pedes
+                              #filter(Population != "A") %>% #adults
+                              filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+                              dplyr::select(-Diagnosis2, -Diagnosis7, -Diagnosis8) %>% #neonates
+                              dplyr::select(-ID,
+                                            -Seizure.Network.Positive,
+                                            -L,
+                                            -R,
+                                            -B,
+                                            -Seizure.Positive,
+                                            -Seizure.Detected,
+                                            -L.1,
+                                            -R.1,
+                                            -B.1,
+                                            -Duration,
+                                            -agree,
+                                            #-agree,
+                                            #-Diagnosis1,
+                                            #-Diagnosis2,
+                                            #-Diagnosis3,
+                                            #-Diagnosis4,
+                                            #-Diagnosis5,
+                                            #-Diagnosis6,
+                                            #-Diagnosis7,
+                                            #-Diagnosis8,
+                                            #-Diagnosis9,
+                                            #-Diagnosis10,
+                                            #-Diagnosis8,
+                                            -Atypical.Signal,
+                                            -Population) %>%
+                              #slice(which(!is.na(as.numeric(Duration)))) %>% 
+                              mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+                              mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))),
+                            family = "binomial")
+summary(EEG_on_rsfMRI_wcovar)
+### Agreement regression w/o 2,7 #####
+regress_frame_big_wo27 <- no_assess_network %>% #filter(Population == "N") %>% #neonates
+                                        #filter(Population == "P" | Population == "p") %>% #pedes
+                                        #filter(Population != "A") %>% #adults
+                                      filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+                                      dplyr::select(-Diagnosis1, -Diagnosis2, -Diagnosis7, -Diagnosis8) %>% #neonates
+                                      dplyr::select(-ID,
+                                      -Seizure.Network.Positive,
+                                      -L,
+                                      -R,
+                                      -B,
+                                      -Seizure.Positive,
+                                      -Seizure.Detected,
+                                      -L.1,
+                                      -R.1,
+                                      -B.1,
+                                      -EEG_positive,
+                                      -fMRI_positive,
+                                      -Duration,
+                                      #-agree,
+                                      #-Diagnosis1,
+                                      #-Diagnosis2,
+                                      #-Diagnosis3,
+                                      #-Diagnosis4,
+                                      #-Diagnosis5,
+                                      #-Diagnosis6,
+                                      #-Diagnosis7,
+                                      #-Diagnosis8,
+                                      #-Diagnosis9,
+                                      #-Diagnosis10,
+                                      #-Diagnosis8,
+                                      -Atypical.Signal,
+                                      -Population) %>%
+                               #slice(which(!is.na(as.numeric(Duration)))) %>% 
+                              mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+                              mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree_wo27 <- sum(regress_frame_big_wo27$agree) / length(regress_frame_big_wo27$agree)
+log_model_agree_big_wo27 <- glm(agree ~., data = regress_frame_big_wo27, family = "binomial")
+coefs <- log_model_agree_big_wo27$coefficients
+PL_confints <- confint(log_model_agree_big_wo27)
+LR_pvalue <-  c(NA,Anova(log_model_agree_big_wo27, test = "LR")[,3])
+results_frame_wo27 <- data.frame(Coefficients = coefs, OR = exp(coefs), ORLowerBound = exp(PL_confints[,1]), 
+                            ORUpperBound = exp(PL_confints[,2]), p_value = LR_pvalue)
+View(results_frame_wo27)
+summary(log_model_agree_big_wo27)
+
+####interaction model age in days######
+interaction_frame <- no_assess_network %>% filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+  #filter(Population != "A") %>% 
+  dplyr::select( -Diagnosis8, -Diagnosis1) %>% #neonates
+  mutate(Population = factor(str_to_upper(Population)))%>%
+  dplyr::select(-ID,
+                -Seizure.Network.Positive,
+                -L,
+                -R,
+                -B,
+                -Seizure.Positive,
+                -Seizure.Detected,
+                -L.1,
+                -R.1,
+                -B.1,
+                -EEG_positive,
+                -fMRI_positive,
+                -Duration,
+                #-agree,
+                #-Diagnosis1,
+                #-Diagnosis2,
+                #-Diagnosis3,
+                #-Diagnosis4,
+                #-Diagnosis5,
+                #-Diagnosis6,
+                #-Diagnosis7,
+                #-Diagnosis8,
+                #-Diagnosis9,
+                #-Diagnosis10,
+                -Atypical.Signal, #)%>%
+  -Population) %>% #dont remove Population for interaction model
+  #slice(which(!is.na(as.numeric(Duration)))) %>% 
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree <- sum(interaction_frame$agree) / length(interaction_frame$agree)
+#interaction_frame$Population <-relevel(interaction_frame$Population, ref = "P")
+interaction_model <- glm(agree ~ (.-Age.at.Admit) * Age.at.Admit, data = interaction_frame, family = "binomial")
+int_coefs <- interaction_model$coefficients
+int_PL_confints <- confint(interaction_model)
+int_LR_pvalue <-  c(NA,Anova(interaction_model, test = "LR")[,3])
+int_results_frame_age <- data.frame(Coefficients = int_coefs, OR = exp(int_coefs), LowerBound = exp(int_PL_confints[,1]), 
+                                      UpperBound = exp(int_PL_confints[,2]), p_value = int_LR_pvalue)
+
+# mean_subject <- data.frame(regress_frame_big %>% mutate(adm_to_MRI = as.numeric(adm_to_MRI),
+#                                              MRI_to_EEG = as.numeric(MRI_to_EEG)) %>%
+#                                       select(-agree) %>%
+#                                       colMeans())
+# mean_subject_male <- mean_subject %>% mutate(Sex = 1)
+# mean_subject_female <- mean_subject %>% mutate(Sex = 0)
+# predict(log_model_agree_big, newdata = mean_subject_male, type = "response")
+
+####interaction model age in days w/o Diagnosis 2,7######
+interaction_frame_wo27 <- no_assess_network %>% filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+  #filter(Population != "A") %>% 
+  dplyr::select(-Diagnosis2, -Diagnosis7, -Diagnosis8) %>% #neonates
+  mutate(Population = factor(str_to_upper(Population)))%>%
+  dplyr::select(-ID,
+                -Seizure.Network.Positive,
+                -L,
+                -R,
+                -B,
+                -Seizure.Positive,
+                -Seizure.Detected,
+                -L.1,
+                -R.1,
+                -B.1,
+                -EEG_positive,
+                -fMRI_positive,
+                -Duration,
+                #-agree,
+                #-Diagnosis1,
+                #-Diagnosis2,
+                #-Diagnosis3,
+                #-Diagnosis4,
+                #-Diagnosis5,
+                #-Diagnosis6,
+                #-Diagnosis7,
+                #-Diagnosis8,
+                #-Diagnosis9,
+                #-Diagnosis10,
+                -Atypical.Signal, #)%>%
+  -Population) %>% #dont remove Population for interaction model
+  #slice(which(!is.na(as.numeric(Duration)))) %>% 
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+#percent_agree <- sum(interaction_frame$agree) / length(interaction_frame$agree)
+#interaction_frame$Population <-relevel(interaction_frame$Population, ref = "P")
+interaction_model_wo27 <- glm(agree ~ (.-Age.at.Admit) * Age.at.Admit, data = interaction_frame_wo27, family = "binomial")
+int_coefs <- interaction_model_wo27$coefficients
+int_PL_confints <- confint(interaction_model_wo27)
+int_LR_pvalue <-  c(NA,Anova(interaction_model_wo27, test = "LR")[,3])
+int_results_frame_age_wo27 <- data.frame(Coefficients = int_coefs, OR = exp(int_coefs), LowerBound = exp(int_PL_confints[,1]), 
+                                      UpperBound = exp(int_PL_confints[,2]), p_value = int_LR_pvalue)
+summary(interaction_model_wo27)
+
+#males
+
+# mean_subject <- data.frame(regress_frame_big %>% mutate(adm_to_MRI = as.numeric(adm_to_MRI),
+#                                              MRI_to_EEG = as.numeric(MRI_to_EEG)) %>%
+#                                       select(-agree) %>%
+#                                       colMeans())
+# mean_subject_male <- mean_subject %>% mutate(Sex = 1)
+# mean_subject_female <- mean_subject %>% mutate(Sex = 0)
+# predict(log_model_agree_big, newdata = mean_subject_male, type = "response")
+
+
+
+####interaction model age pop######
+interaction_frame <- no_assess_network %>% filter(abs(EEG_to_MRI) < 200 | abs(adm_to_first_EEG) < 200) %>% filter(Population != "A") %>% 
+                                    mutate(Population = factor(str_to_upper(Population)))%>%
+                                    dplyr::select(-ID,
+                                      -Seizure.Network.Positive,
+                                      -L,
+                                      -R,
+                                      -B,
+                                      -Seizure.Positive,
+                                      -Seizure.Detected,
+                                      -L.1,
+                                      -R.1,
+                                      -B.1,
+                                      -EEG_positive,
+                                      -fMRI_positive,
+                                      -Duration,
+                                      #-agree,
+                                      -Diagnosis1,
+                                      -Diagnosis2,
+                                      -Diagnosis3,
+                                      -Diagnosis4,
+                                      -Diagnosis5,
+                                      -Diagnosis6,
+                                      -Diagnosis7,
+                                      -Diagnosis8,
+                                      -Diagnosis9,
+                                      -Diagnosis10,
+                                      -Atypical.Signal)%>%
+                                      #-Population) %>% #dont remove Population for interaction model
+                               #slice(which(!is.na(as.numeric(Duration)))) %>% 
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree <- sum(interaction_frame$agree) / length(interaction_frame$agree)
+###interaction_frame$Population <-relevel(interaction_frame$Population, ref = "P")
+interaction_model <- glm(agree ~ (.-Population) * Population, data = interaction_frame, family = "binomial")
+int_coefs <- interaction_model$coefficients
+int_PL_confints <- confint(interaction_model)
+int_LR_pvalue <-  c(NA,Anova(interaction_model, test = "LR")[,3])
+int_results_frame_N_ref <- data.frame(Coefficients = int_coefs, OR = exp(int_coefs), LowerBound = exp(int_PL_confints[,1]), 
+                            UpperBound = exp(int_PL_confints[,2]), p_value = int_LR_pvalue)
+### Stratified age regression ####
+
+####Neonates
+regress_frame_big_wo27 <- no_assess_network %>% filter(neonates) %>% #neonates
+  #filter(Population == "P" | Population == "p") %>% #pedes
+  #filter(Population != "A") %>% #adults
+  filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+  dplyr::select(-Diagnosis1, -Diagnosis2, -Diagnosis7, -Diagnosis8) %>% #neonates
+  dplyr::select(-ID,
+                -Seizure.Network.Positive,
+                -L,
+                -R,
+                -B,
+                -Seizure.Positive,
+                -Seizure.Detected,
+                -L.1,
+                -R.1,
+                -B.1,
+                -EEG_positive,
+                -fMRI_positive,
+                -Duration,
+                #-agree,
+                #-Diagnosis1,
+                #-Diagnosis2,
+                #-Diagnosis3,
+                #-Diagnosis4,
+                #-Diagnosis5,
+                #-Diagnosis6,
+                #-Diagnosis7,
+                #-Diagnosis8,
+                #-Diagnosis9,
+                #-Diagnosis10,
+                #-Diagnosis8,
+                -Atypical.Signal,
+                -Population) %>%
+  #slice(which(!is.na(as.numeric(Duration)))) %>% 
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree_wo27 <- sum(regress_frame_big_wo27$agree) / length(regress_frame_big_wo27$agree)
+log_model_agree_big_wo27 <- glm(agree ~., data = regress_frame_big_wo27, family = "binomial")
+coefs <- log_model_agree_big_wo27$coefficients
+PL_confints <- confint(log_model_agree_big_wo27)
+LR_pvalue <-  c(NA,Anova(log_model_agree_big_wo27, test = "LR")[,3])
+results_frame_wo27 <- data.frame(Coefficients = coefs, OR = exp(coefs), ORLowerBound = exp(PL_confints[,1]), 
+                                 ORUpperBound = exp(PL_confints[,2]), p_value = LR_pvalue)
+View(results_frame_wo27)
+summary(log_model_agree_big_wo27)
+
+####Children
+regress_frame_big_wo27 <- no_assess_network %>% filter(pedes) %>% #neonates
+  #filter(Population == "P" | Population == "p") %>% #pedes
+  #filter(Population != "A") %>% #adults
+  filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+  dplyr::select(-Diagnosis1, -Diagnosis2, -Diagnosis7, -Diagnosis8) %>% #neonates
+  dplyr::select(-ID,
+                -Seizure.Network.Positive,
+                -L,
+                -R,
+                -B,
+                -Seizure.Positive,
+                -Seizure.Detected,
+                -L.1,
+                -R.1,
+                -B.1,
+                -EEG_positive,
+                -fMRI_positive,
+                -Duration,
+                #-agree,
+                #-Diagnosis1,
+                #-Diagnosis2,
+                #-Diagnosis3,
+                #-Diagnosis4,
+                #-Diagnosis5,
+                #-Diagnosis6,
+                #-Diagnosis7,
+                #-Diagnosis8,
+                #-Diagnosis9,
+                #-Diagnosis10,
+                #-Diagnosis8,
+                -Atypical.Signal,
+                -Population) %>%
+  #slice(which(!is.na(as.numeric(Duration)))) %>% 
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree_wo27 <- sum(regress_frame_big_wo27$agree) / length(regress_frame_big_wo27$agree)
+log_model_agree_big_wo27 <- glm(agree ~., data = regress_frame_big_wo27, family = "binomial")
+coefs <- log_model_agree_big_wo27$coefficients
+PL_confints <- confint(log_model_agree_big_wo27)
+LR_pvalue <-  c(NA,Anova(log_model_agree_big_wo27, test = "LR")[,3])
+results_frame_wo27 <- data.frame(Coefficients = coefs, OR = exp(coefs), ORLowerBound = exp(PL_confints[,1]), 
+                                 ORUpperBound = exp(PL_confints[,2]), p_value = LR_pvalue)
+View(results_frame_wo27)
+summary(log_model_agree_big_wo27)
+
+## adults
+regress_frame_big_wo27 <- no_assess_network %>% filter(adults) %>% #neonates
+  #filter(Population == "P" | Population == "p") %>% #pedes
+  #filter(Population != "A") %>% #adults
+  filter(abs(EEG_to_MRI) < 200 & abs(adm_to_first_EEG) < 200) %>% 
+  dplyr::select(-Diagnosis1, -Diagnosis2, -Diagnosis7, -Diagnosis8) %>% #neonates
+  dplyr::select(-ID,
+                -Seizure.Network.Positive,
+                -L,
+                -R,
+                -B,
+                -Seizure.Positive,
+                -Seizure.Detected,
+                -L.1,
+                -R.1,
+                -B.1,
+                -EEG_positive,
+                -fMRI_positive,
+                -Duration,
+                #-agree,
+                #-Diagnosis1,
+                #-Diagnosis2,
+                #-Diagnosis3,
+                #-Diagnosis4,
+                #-Diagnosis5,
+                #-Diagnosis6,
+                #-Diagnosis7,
+                #-Diagnosis8,
+                #-Diagnosis9,
+                #-Diagnosis10,
+                #-Diagnosis8,
+                -Atypical.Signal,
+                -Population) %>%
+  #slice(which(!is.na(as.numeric(Duration)))) %>% 
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ .x - mean(.x))) %>% #center continuous covariates
+  mutate(across(c(Age.at.Admit,adm_to_first_EEG, EEG_to_MRI), ~ scale(.x))) #scale continuous covariates
+percent_agree_wo27 <- sum(regress_frame_big_wo27$agree) / length(regress_frame_big_wo27$agree)
+log_model_agree_big_wo27 <- glm(agree ~., data = regress_frame_big_wo27, family = "binomial")
+coefs <- log_model_agree_big_wo27$coefficients
+PL_confints <- confint(log_model_agree_big_wo27)
+LR_pvalue <-  c(NA,Anova(log_model_agree_big_wo27, test = "LR")[,3])
+results_frame_wo27 <- data.frame(Coefficients = coefs, OR = exp(coefs), ORLowerBound = exp(PL_confints[,1]), 
+                                 ORUpperBound = exp(PL_confints[,2]), p_value = LR_pvalue)
+View(results_frame_wo27)
+summary(log_model_agree_big_wo27)
+### Agreement Regression LASSO ####################
+### rsfMRI regression ####
+
+rsfMRI_regress_big <- regress_frame_big %>% dplyr::select(-MRI_to_EEG, -Duration, -agree, -fMRI_positive)
+log_model_rsfMRI_big <- glm(no_assess_network$fMRI_positive[which(!is.na(as.numeric(no_assess_network$Duration)))] ~., 
+                        data = rsfMRI_regress_big, family = "binomial")
+summary(log_model_rsfMRI_big)
+
+### EEG regression ####
+EEG_regress_big <- regress_frame_big %>% mutate(adm_to_EEG = rowSums(cbind(adm_to_MRI, MRI_to_EEG))) %>%
+               dplyr::select(-adm_to_MRI, -MRI_to_EEG, -agree, -EEG_positive)
+log_model_EEG_big <- glm(no_assess_network$EEG_positive[which(!is.na(as.numeric(no_assess_network$Duration)))] ~., 
+                        data = EEG_regress_big, family = "binomial")
+summary(log_model_EEG_big)
+### Agreement regression with assessment and networks#####
+regress_frame_small <- small_frame %>% dplyr::select(-ID,
+                                                  -Seizure.Network.Positive,
+                                                  -L,
+                                                  -R,
+                                                  -B,
+                                                  -Seizure.Positive,
+                                                  -Seizure.Detected,
+                                                  -L.1,
+                                                  -R.1,
+                                                  -B.1,
+                                                  -EEG_positive,
+                                                  -fMRI_positive,
+                                                  -Diagnosis8,
+                                                  -Atypical.Signal) %>%
+  slice(which(!is.na(as.numeric(Duration)))) 
+
+percent_agree_small <- sum(regress_frame_small$agree) / length(regress_frame_small$agree)
+log_model_agree_small <- glm(agree ~., data = regress_frame_small, family = "binomial")
+summary(log_model_agree_small)
+
+### rsfMRI regression ####
+
+rsfMRI_regress_small <- regress_frame_small %>% dplyr::select(-MRI_to_EEG, -Duration, -agree)
+log_model_rsfMRI_small <- glm(small_frame$fMRI_positive[which(!is.na(as.numeric(small_frame$Duration)))] ~., 
+                             data = rsfMRI_regress_small, family = "binomial")
+summary(log_model_rsfMRI_small)
+
+### EEG regression ####
+EEG_regress_small <- regress_frame_small %>% mutate(adm_to_EEG = rowSums(cbind(adm_to_MRI, MRI_to_EEG))) %>%
+  dplyr::select(-adm_to_MRI, -MRI_to_EEG, -agree)
+log_model_EEG_small <- glm(small_frame$EEG_positive[which(!is.na(as.numeric(small_frame$Duration)))] ~., 
+                     data = EEG_regress_small, family = "binomial")
+summary(log_model_EEG_small)
