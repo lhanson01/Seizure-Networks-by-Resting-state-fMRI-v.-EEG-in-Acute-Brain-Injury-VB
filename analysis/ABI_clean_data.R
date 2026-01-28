@@ -17,9 +17,16 @@ choose_columns <- renamed_frame %>% select(ID,
 
 agr_mcnem_frame <- choose_columns %>% filter(Seizure.Positive %in% c(0,1),
                                                   Seizure.Network.Positive %in% c(0,1)) %>%
-                                      mutate(Neonates = ifelse(Population == "N", 1, 0),
-                                             Children = ifelse(Population %in% c("P", "p"), 1, 0),
-                                             Adults = ifelse(Population == "A", 1, 0)) %>%
+                                      mutate(Neonates = ifelse(as.numeric(Age.at.Admit) < 29, 1, 0),
+                                             Children = ifelse(as.numeric(Age.at.Admit) < 6570 & as.numeric(Age.at.Admit) > 28,
+                                                               1, 0),
+                                             Adults = ifelse(as.numeric(Age.at.Admit) > 6569, 1, 0)) %>%
+                                      mutate(adm_to_eeg = as.numeric(Start.Date) - as.numeric(Admission.Date),
+                                             eeg_to_mri = as.numeric(rs.fMRI.Date) - as.numeric(Start.Date)) %>%
+                                      select(-Start.Date,
+                                             -Admission.Date,
+                                             -rs.fMRI.Date,
+                                             -ID) %>%
                                       select(-Population)
 
 ################# Regression Processing #####################
@@ -36,18 +43,12 @@ lapply(1:nrow(agr_mcnem_frame), function(i){
 )
 
 regression_frame <- agr_mcnem_frame %>%
-                       mutate(adm_to_eeg = as.numeric(Start.Date) - as.numeric(Admission.Date),
-                             eeg_to_mri = as.numeric(rs.fMRI.Date) - as.numeric(Start.Date)) %>%
-                       select(-Start.Date,
-                              -Admission.Date,
-                              -rs.fMRI.Date,
-                              -ID) %>%
                        mutate(agree = as.numeric(Seizure.Network.Positive == Seizure.Positive)) %>%
                        bind_cols(coding_variables) %>%
                        select(-Coded.Diagnosis)%>%#,
                               #-Diagnosis2,
                               #-Diagnosis7) %>%
-                       filter(abs(adm_to_eeg) < 200 & abs(eeg_to_mri) < 200) %>%
+                       #filter(abs(adm_to_eeg) < 300 & abs(eeg_to_mri) < 300) %>%
                        mutate(adm_to_eeg = scale(adm_to_eeg),
                               eeg_to_mri = scale(eeg_to_mri),
                               age_at_admit = scale(as.numeric(Age.at.Admit))) %>%
