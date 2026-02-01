@@ -17,7 +17,8 @@ choose_columns <- renamed_frame %>% select(ID,
 
 agr_mcnem_frame <- choose_columns %>% filter(Seizure.Positive %in% c(0,1),
                                                   Seizure.Network.Positive %in% c(0,1)) %>%
-                                      mutate(Neonates = ifelse(as.numeric(Age.at.Admit) < 29, 1, 0),
+                                      mutate(Age.at.Admit = as.numeric(Age.at.Admit),
+                                             Neonates = ifelse(as.numeric(Age.at.Admit) < 29, 1, 0),
                                              Children = ifelse(as.numeric(Age.at.Admit) < 6570 & as.numeric(Age.at.Admit) > 28,
                                                                1, 0),
                                              Adults = ifelse(as.numeric(Age.at.Admit) > 6569, 1, 0)) %>%

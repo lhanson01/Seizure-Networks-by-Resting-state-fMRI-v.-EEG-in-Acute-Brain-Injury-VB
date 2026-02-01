@@ -11,7 +11,7 @@ for(age_group in c("All", "Neonates", "Children", "Adults")){
   names(demo_table) <- c("Sex",
                          "Age at Admission",
                          "Days between EEG and rs-fMRI",
-                         "Admission to first EEG",
+                         "Days between admission and first EEG",
                          "Seizure Detected on EEG",
                          "SN Detected on rs-fMRI")
 
@@ -153,13 +153,15 @@ model <- glm(agree ~. ,
 coefficients <- model$coefficients
 prof_lh_confints <- confint(model)
 p_values <- c(NA,Anova(model, test = "LR")[,3])
-reg_results <- data.frame(coefficients = coefficients,
+reg_results <- data.frame(OR_log = coefficients,
+                          OR_log_lower = prof_lh_confints[,1],
+                          OR_log_upper = prof_lh_confints[,2],
                                       OR = exp(coefficients),
                                       OR_lower = exp(prof_lh_confints[,1]),
                                       OR_upper = exp(prof_lh_confints[,2]),
                                       p_values = p_values)
 
-#### Agreement Logistic Regression with interaction ####
+#### Agreement Logistic Regression with age interaction ####
   interaction_model <- glm(agree ~ (.-age_at_admit) * age_at_admit,
                data = regr_frame_no_age_pop,
                family = "binomial")
